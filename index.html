@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>EPUB to TXT</title>
+  <style>
+    :root{
+      --blue:#1a4fff;
+      --border:#d9dde3;
+      --text:#111;
+      --muted:#666;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+    body{margin:0;background:#fff;color:var(--text);}
+    .page{max-width:720px;margin:32px auto 64px;padding:0 20px;}
+    header{margin-bottom:28px;border-bottom:2px solid var(--blue);padding-bottom:16px;}
+    h1{font-size:22px;font-weight:600;margin:0 0 6px;}
+    .subtitle{font-size:14px;color:var(--muted);line-height:1.5;}
+    .section{margin-top:28px;}
+    .section-title{font-size:15px;font-weight:600;margin-bottom:10px;padding-left:10px;border-left:4px solid var(--blue);}
+    .upload-box{border:1px solid var(--border);padding:16px;font-size:14px;}
+    .upload-box input{display:block;margin-top:10px;}
+    .meta{font-size:13px;color:var(--muted);margin-top:6px;}
+    button{margin-top:16px;padding:10px 16px;font-size:14px;border-radius:4px;border:1px solid var(--border);background:#fff;cursor:pointer;}
+    button.primary{background:var(--blue);color:#fff;border-color:var(--blue);}
+    button[disabled]{opacity:0.5;cursor:not-allowed;}
+    .progress{margin-top:20px;height:6px;background:#eee;}
+    .progress > div{height:100%;width:0%;background:var(--blue);}
+    .log{margin-top:20px;font-size:13px;border:1px solid var(--border);padding:10px;max-height:160px;overflow:auto;white-space:pre-wrap;}
+    .download{margin-top:24px;padding:12px;border:1px solid var(--border);background:#f8f9fb;font-size:14px;}
+    .primary-btn{display:inline-block;margin-left:12px;padding:10px 14px;background:var(--blue);color:#fff;text-decoration:none;border-radius:4px;border:1px solid var(--blue);font-weight:600;}
+    .secondary-btn{display:inline-block;margin-left:8px;padding:10px 14px;background:#fff;color:var(--blue);text-decoration:none;border-radius:4px;border:1px solid var(--blue);font-weight:600;}
+  </style>
+</head>
+<body>
+
+<div class="page">
+  <header>
+    <h1>EPUB to Plain Text Converter</h1>
+    <div class="subtitle">Strict text-only conversion. Correct reading order preserved.</div>
+  </header>
+
+  <div class="section">
+    <div class="section-title">Step 1: Select EPUB File</div>
+    <div class="upload-box">
+      <label for="fileInput">Choose an EPUB file from your device:</label>
+      <input id="fileInput" type="file" accept=".epub,application/epub+zip" />
+      <div id="fileInfo" class="meta">No file selected</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Step 2: Convert</div>
+    <button id="convertBtn" class="primary" disabled>Convert to TXT</button>
+    <div class="progress"><div id="bar"></div></div>
+    <div id="log" class="log"></div>
+  </div>
+
+  <div id="download" class="download" style="display:none"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script>
+/* EPUB -> TXT (SPINE-ORDERED, STRICT TEXT MODE)
+   - No visible chapter markers
+   - Headings (h1–h6) kept with blank lines before and after
+*/
+
+var fileInput = document.getElementById('fileInput');
+var convertBtn = document.getElementById('convertBtn');
+var fileInfo = document.getElementById('fileInfo');
+var logEl = document.getElementById('log');
+var bar = document.getElementById('bar');
+var downloadBox = document.getElementById('download');
+
+var currentFile = null;
+
+function log(msg){
+  logEl.textContent += msg + '\n';
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setProgress(p){ bar.style.width = p + '%'; }
+
+fileInput.addEventListener('change', function(){
+  if(!fileInput.files || !fileInput.files.length){
+    currentFile = null;
+    fileInfo.textContent = 'No file selected';
+    convertBtn.disabled = true;
+    return;
+  }
+  currentFile = fileInput.files[0];
+  fileInfo.textContent = currentFile.name + ' (' + (currentFile.size/1024/1024).toFixed(2) + ' MB)';
+  convertBtn.disabled = false;
+});
+
+convertBtn.addEventListener('click', function(){
+  if(!currentFile) return;
+
+  convertBtn.disabled = true;
+  logEl.textContent = '';
+  setProgress(0);
+  downloadBox.style.display = 'none';
+
+  currentFile.arrayBuffer()
+    .then(function(buf){ return JSZip.loadAsync(buf); })
+    .then(function(zip){ return readSpineOrderedText(zip); })
+    .then(function(text){
+      var blob = new Blob([text], {type:'text/plain'});
+      var url = URL.createObjectURL(blob);
+
+      downloadBox.textContent = 'Conversion complete.';
+
+      var dBtn = document.createElement('a');
+      dBtn.className = 'primary-btn';
+      dBtn.href = url;
+      dBtn.download = currentFile.name.replace(/\.epub$/i,'') + '.txt';
+      dBtn.textContent = 'Download TXT file';
+
+      var nBtn = document.createElement('a');
+      nBtn.className = 'secondary-btn';
+      nBtn.href = '#';
+      nBtn.textContent = 'Convert another file';
+      nBtn.onclick = function(e){
+        e.preventDefault();
+        fileInput.value = '';
+        currentFile = null;
+        fileInfo.textContent = 'No file selected';
+        logEl.textContent = '';
+        bar.style.width = '0%';
+        downloadBox.style.display = 'none';
+        convertBtn.disabled = true;
+      };
+
+      downloadBox.appendChild(dBtn);
+      downloadBox.appendChild(nBtn);
+      downloadBox.style.display = 'block';
+      log('Done');
+    })
+    .catch(function(err){ log('Error: ' + err); convertBtn.disabled = false; });
+});
+
+function readSpineOrderedText(zip){
+  log('Reading EPUB structure');
+
+  return zip.file('META-INF/container.xml').async('string').then(function(xml){
+    var cdoc = new DOMParser().parseFromString(xml, 'application/xml');
+    var opfPath = cdoc.querySelector('rootfile').getAttribute('full-path');
+    var basePath = opfPath.substring(0, opfPath.lastIndexOf('/') + 1);
+
+    return zip.file(opfPath).async('string').then(function(opf){
+      var odoc = new DOMParser().parseFromString(opf, 'application/xml');
+
+      var manifest = {};
+      var items = odoc.querySelectorAll('manifest > item');
+      for(var i=0;i<items.length;i++){
+        manifest[items[i].getAttribute('id')] = items[i].getAttribute('href');
+      }
+
+      var spine = odoc.querySelectorAll('spine > itemref');
+      var text = '';
+      var chain = Promise.resolve();
+
+      spine.forEach(function(ref, idx){
+        chain = chain.then(function(){
+          var href = manifest[ref.getAttribute('idref')];
+          if(!href) return;
+          var fullPath = basePath + href;
+
+          return zip.file(fullPath).async('string').then(function(html){
+            var doc = new DOMParser().parseFromString(html, 'text/html');
+
+            // remove non-text elements
+            var junk = doc.querySelectorAll('img,svg,video,audio,canvas,script,style');
+            for(var j=0;j<junk.length;j++){ junk[j].remove(); }
+
+            // add spacing around headings
+            var headings = doc.querySelectorAll('h1,h2,h3,h4,h5,h6');
+            for(var k=0;k<headings.length;k++){
+              var h = headings[k];
+              var t = h.textContent.trim();
+              if(t){ h.textContent = '\n\n' + t + '\n\n'; }
+            }
+
+            if(doc.body){
+              text += '\n\n' + doc.body.textContent.trim();
+            }
+
+            setProgress(Math.round((idx+1)/spine.length*100));
+          });
+        });
+      });
+
+      return chain.then(function(){ return text; });
+    });
+  });
+}
+</script>
+
+</body>
+</html>
